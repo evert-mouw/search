@@ -14,6 +14,7 @@
 # Evert Mouw <post@evert.net>
 # 2019-01-30 first version
 # 2019-01-31 improvements
+# 2019-02-01 skip ranked sort if using fzf
 
 # remote server(s) with sshd running
 # hint: this is only usable when you have key-based ssh login
@@ -213,6 +214,7 @@ fi
 # functions copied from Evert's SortOnKeyWordsRanked.sh version 2019-01-31
 # Sort a file line by line, based on multiple keywords, giving a higher rank when
 # all keywords are present in a line, and otherwise ordering in order of keywords.
+# This function is slow and should be replaced by a C version or so...
 function ranklines() {
 	KEYWORDS=${@}
 	while read LINE
@@ -232,7 +234,15 @@ function ranklines() {
 function sortrankedlines() {
 	echo "$1" | ranklines "${@:2}" | sort -n -r | cut -f2
 }
-RESULTS=$(sortrankedlines "$RESULTS" "$SEARCH")
+
+# execute ranked sort
+# slow -- see function above
+# when pager is fzf, then skip, because fzf does it for us,
+# with the additional benefit that fzf is way faster!
+if [[ $SOMEPAGER != "fzf" ]]
+then
+	RESULTS=$(sortrankedlines "$RESULTS" "$SEARCH")
+fi
 
 # return output
 # if fzf is being used, do all kinds of magic :-)

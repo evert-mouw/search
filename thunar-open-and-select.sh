@@ -9,6 +9,7 @@
 # Evert Mouw <post@evert.net>
 # 2019-01-30 first version
 # 2019-01-31 dep checking
+# 2019-02-01 fix for single quotes
 
 # dependency checking
 DEPENDENCIES="gdbus thunar pidof"
@@ -66,7 +67,7 @@ else
 	METHOD="DisplayFolderAndSelect"
 	DIR=$(dirname "$1")
 	FILE=$(basename "$1")
-	$COMMAND.$METHOD "'$DIR'" "'$FILE'" $EMPTYARGS > /dev/null
+	$COMMAND.$METHOD "$DIR" "$FILE" $EMPTYARGS > /dev/null
 fi
 
 exit

@@ -14,8 +14,6 @@ This is a *locate wrapper* which does:
 
 I use this on my personal machines to easily find files on both the local computer and a remote file storage. I like to be able to quickly type "search foo bar" or click an icon in my dock or press Super-F, start the search, fine-tune the search using fzf, and open the filemanager Thunar with the selected file already selected.
 
-![Screenshot](screenshot.png)
-
 ## intended use
 
 The scripts are meant to be used in an XFCE environment. I din't test other desktop environments; probably you don't need to change very much to adapt it. The intended users know a bit about Linux command line and/or scripting use and can edit the settings in the shellscripts.
@@ -26,7 +24,7 @@ You might need a few helper programs installed, such as fzf, zenity, xsel, gdbus
 
 ## shortcomings
 
-The ranked sorting might be a bit slow; maybe I should create a small program in C for that in the future. A stand-alone version is provided as `SortOnKeyWordsRanked.sh`; it should be improved.
+The ranked sorting might be a bit slow; maybe I should create a small program in C for that in the future. A stand-alone version is provided as `SortOnKeyWordsRanked.sh`; it should be improved. But when you are using fzf (which is highly recommended) that task is being done by fzf instead, resulting in a much faster ranked sort.
 
 ## usage
 
@@ -46,7 +44,7 @@ Have fun!
 
 ~Evert
 
-Version: 2019-01-31
+Version: 2019-02-01
 
 Created by [Evert Mouw](post@evert.net)
 

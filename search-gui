@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# GUI helper for search
+
+# Evert Mouw <post@evert.net>
+# 2019-01-30 first version
+# 2019-01-31 improvements
+
+SEARCHERBIN="/home/evert/bin/search"
+DIALOG_WIDTH=400
+
+# dependency checking
+DEPENDENCIES="zenity xrdb xfce4-terminal"
+for DEP in $DEPENDENCIES
+do
+	if ! command -v $DEP > /dev/null
+	then
+		echo "Missing: $DEP"
+		DEPFAIL=1
+	fi
+done
+if [[ $DEPFAIL -eq 1 ]]
+then
+	echo "My dependencies are: $DEPENDENCIES"
+	exit 1
+fi
+
+# warn
+echo "Warning: this program is not meant to be"
+echo "started from the command line or from within"
+echo "a terminal emulator. It was made and tested"
+echo "to be started from a graphical user interface,"
+echo "so for the cli just use 'search keywords'"
+
+# adapting dialog width for dpi settings
+# default dpi=96, so for dpi=x, you need with = x * default_with / 96
+DPI=$(xrdb -query | grep dpi | cut -f2)
+DIALOG_WIDTH=$(($DPI * $DIALOG_WIDTH / 96 ))
+
+SEARCHTERMS=$(zenity --entry --title="File Search" --text="Search terms:" --icon-name="edit-find" --width=$DIALOG_WIDTH)
+if [ "$SEARCHTERMS" == "" ]
+then
+	exit
+fi
+TITLE="File Search: $SEARCHTERMS"
+OPTIONS="--hide-menubar --hide-toolbar --drop-down --title='$TITLE' --color-text=yellow --color-bg=#202020"
+eval xfce4-terminal $OPTIONS -x "$SEARCHERBIN" "$SEARCHTERMS"

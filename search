@@ -1,0 +1,265 @@
+#!/bin/bash
+
+# Wrapper around locate, to execute
+# a locate both on the local machine
+# and zero, one or multiple remote servers.
+# The results are merged. If possible,
+# remote paths are mapped to local parths.
+
+# This is handy if you use some fileserver
+# very often so locate with fzf can
+# find those remote files easily using
+# the locate database on the server.
+
+# Evert Mouw <post@evert.net>
+# 2019-01-30 first version
+# 2019-01-31 improvements
+
+# remote server(s) with sshd running
+# hint: this is only usable when you have key-based ssh login
+# for non-standard user/port, better edit ~/.ssh/config
+# note: you can specify zero, one, or multiple servers
+SSHSERVERS="ygg"
+
+# remote (server) to local (client) path mapping
+# write like so, using servernames as in SSHSERVERS:
+# SERVER:PATH_ON_SERVER:PATH_ON_LOCAL_MACHINE
+# e.g. fileserver:/mnt/disk1:/mnt/fileserver/share1
+# multiple lines are allowed
+MAPPINGS="
+ygg:/mnt:/mnt/ygg
+ygg:/home/leech:/mnt/ygg/leech
+"
+
+# pager to use; e.g. "more", "less", "fzf",
+# or "" to disable the use of a pager.
+# when using "fzf", additional options will be set!
+# also the search-gui only works with fzf...
+# highly recommended: "fzf"
+SOMEPAGER="fzf"
+FZFCOLORS="dark,hl:#FF5555"
+
+# filemanager to use, only invoked when using fzf
+# the selected file will be passed to this filemanager
+# but only when running inside a X gui
+FILEMANAGER="/home/evert/bin/thunar-open-and-select.sh"
+
+# locate options
+# #evert: Unfortunately, my old EL6.x server has an old locate version,
+# #evert: so the '--all' option (AND operator) is not supported yet.
+# #evert: That would speed it up a bit..."
+LOCATEOPTIONS="-i"
+
+# when no results are found this line will be added to the results,
+# with the servername appended, and also the search terms appended
+HOSTERRORTEMPLATE="⚠️  No results from 😞"
+
+# template for location and name of temporary named pipes
+# the search target will be appended to this
+NAMEDPIPESTEMPLATE="$HOME/.tmp.search"
+
+# |-------------> don't change below this line <-------------|
+
+
+# dependency checking
+DEPENDENCIES="tput xsel fzf wc xhost locate sed"
+for DEP in $DEPENDENCIES
+do
+	if ! command -v $DEP > /dev/null
+	then
+		echo "Missing: $DEP"
+		DEPFAIL=1
+	fi
+done
+if [[ $DEPFAIL -eq 1 ]]
+then
+	echo "My dependencies are: $DEPENDENCIES"
+	exit 1
+fi
+
+# are keywords provided as arguments?
+if [[ $1 == "" ]]
+then
+	echo "I need at least one keyword for search..."
+	exit
+fi
+
+function toclipboard() {
+	# copy text to clipboard
+	# depends on "xsel"
+	# example use: SOMEPAGER="fzf | toclipboard"
+	read INPUT
+	echo "$INPUT" | tr -d '\n' | xsel -i -p
+	echo "$INPUT" | tr -d '\n' | xsel -i -s
+	echo "$INPUT" | tr -d '\n' | xsel -i -b
+	echo "$INPUT"
+}
+
+# take all arguments (search terms)
+SEARCH=${@}
+echo "Searching for $SEARCH ..."
+
+# remove empty lines from mappings
+MAPPINGS=$(echo "$MAPPINGS" | sed '/^$/d')
+
+# global scope
+HOSTERR=""
+
+# ask all servers and local at the same time
+# using parrallel execution with named pipes to speed stuff up 
+function getremote() {
+	SSHHOST="$1"
+	echo "DEBUG: $(date) executing locate @ $SSHHOST" 1>&2
+	# construct path from ssh host
+	# NOTE: must set user here, otherwise xfce4-terminal doesn't recognize sftp link,
+	# NOTE: but maybe in ~/.ssh/config another user is specified...
+	SSHPREFIX="sftp://$USER@$SSHHOST"
+	# escape slashes for use by sed later on
+	SSHPREFIX=$(echo "$SSHPREFIX" | sed 's/\//\\\//g')
+	# search on the remote location
+	# and prefix the ssh login
+	# note: i've added a 3 sec connection timeout
+	# note: do not enclose $SEARCH in quotation marks; options will not be passed then
+	REMOTERESULT=$(ssh -o ConnectTimeout=3 $SSHHOST locate $LOCATEOPTIONS $SEARCH)
+	if [[ $? -gt 0 ]]
+	then
+		# this might be a connection error,
+		# but also happens if nothing was found...
+		HOSTERR="$HOSTERRORTEMPLATE $SSHHOST : $SEARCH"
+		REMOTERESULT="$HOSTERR"
+		echo "$HOSTERR" 1>&2
+	else
+		# add ssh prefix
+		REMOTERESULT=$(echo "$REMOTERESULT" | sed "s/^/${SSHPREFIX}/")
+		# map remote paths to local paths if possible
+		while read LINE
+		do
+			if [[ $LINE != "" ]]
+			then
+				SERVER=$(echo $LINE | cut -d: -f1)
+				if [[ $SERVER == $SSHHOST ]]
+				then
+					SERVERPATH=$(echo $LINE | cut -d: -f2)
+					CLIENTPATH=$(echo $LINE | cut -d: -f3)
+					# escape slashes for use by sed later on
+					SERVERPATH=$(echo "$SERVERPATH" | sed 's/\//\\\//g')
+					CLIENTPATH=$(echo "$CLIENTPATH" | sed 's/\//\\\//g')
+					# finally, search and replace for this mapping
+					REMOTERESULT=$(echo "$REMOTERESULT" | sed "s/^${SSHPREFIX}${SERVERPATH}/${CLIENTPATH}/")
+				fi
+			fi
+		done <<< "$MAPPINGS"
+	fi
+	npipe="$NAMEDPIPESTEMPLATE.$SSHHOST"
+	echo "$REMOTERESULT" > $npipe #return
+	echo "DEBUG: $(date) $SSHHOST ready" 1>&2
+}
+function getlocal() {
+	# search locally
+	echo "DEBUG: $(date) executing locate @ local" 1>&2
+	LOCAL=$(locate $LOCATEOPTIONS $SEARCH)
+	if [[ $LOCAL == "" ]]
+	then
+		LOCAL="$HOSTERRORTEMPLATE local : $SEARCH"
+	fi
+	npipe="$NAMEDPIPESTEMPLATE.local"
+	echo "$LOCAL" > $npipe #return
+	echo "" > $npipe
+	echo "DEBUG: $(date) local ready" 1>&2
+}
+# start up searches in parrallel
+# and collect the results using named pipes
+# (coproces didn't work for me, as i use dynamic descriptors)
+trap "rm -f $NAMEDPIPESTEMPLATE.*" EXIT
+for SSHHOST in $SSHSERVERS
+do
+	npipe="$NAMEDPIPESTEMPLATE.$SSHHOST"
+	mknod $npipe p
+	getremote $SSHHOST &
+done
+npipe="$NAMEDPIPESTEMPLATE.local"
+mknod $npipe p
+getlocal &
+#wait # normally you should wait till all parrallel jobs are done
+#     # working, but that would block the named pipes who now take
+#     # care of that problem :-)
+#
+# now combine the partial results
+# but postphone merging of local results till after mapping
+LOCAL==$(cat $npipe)
+for SSHHOST in $SSHSERVERS
+do
+	npipe="$NAMEDPIPESTEMPLATE.$SSHHOST"
+	REMOTERESULT=$(cat $npipe)
+	REMOTE="$REMOTERESULT
+$REMOTE"
+done
+
+# remove empty lines; count lines
+RESULTS=$(echo "$RESULTS" | sed '/^$/d')
+LINECOUNT=$(echo "$RESULTS" | wc --lines) 
+
+# merge local and remote
+RESULTS="${REMOTE}
+${LOCAL}"
+
+# if no results, just exit
+if [[ $LINECOUNT -lt 2 && $RESULTS == "" ]]
+then
+	exit
+fi
+
+# rank based on keyword frequency
+# functions copied from Evert's SortOnKeyWordsRanked.sh version 2019-01-31
+# Sort a file line by line, based on multiple keywords, giving a higher rank when
+# all keywords are present in a line, and otherwise ordering in order of keywords.
+function ranklines() {
+	KEYWORDS=${@}
+	while read LINE
+	do
+		RANK=0
+		for KEY in $KEYWORDS
+		do
+			# case insensitive matching (Bash only)
+			if [[ ${LINE^^} == *"${KEY^^}"* ]]
+			then
+				((RANK++))
+			fi
+		done
+		echo -e "$RANK\t$LINE"
+	done
+}
+function sortrankedlines() {
+	echo "$1" | ranklines "${@:2}" | sort -n -r | cut -f2
+}
+RESULTS=$(sortrankedlines "$RESULTS" "$SEARCH")
+
+# return output
+# if fzf is being used, do all kinds of magic :-)
+if [[ $SOMEPAGER == "fzf" ]]
+then
+	FZFMAGIC="fzf --no-sort --color=$FZFCOLORS --exact --query='$SEARCH' | toclipboard"
+	SELECTION=$(echo "$RESULTS" | eval $FZFMAGIC)
+	if [[ $SELECTION = "" ]]
+	then
+		echo "No file selected."
+	else
+		if xhost >& /dev/null
+		then
+			echo "Opening in file manager: $SELECTION"
+			$FILEMANAGER "$SELECTION"
+		else
+			echo "No X detected, so not opening file manager."
+		fi
+	fi
+# for all other pagers
+else
+	# use pager if more result lines than terminal height
+	if [[ $SOMEPAGER != "" && $LINECOUNT -gt $(tput lines) ]]
+	then
+		echo "$RESULTS" | $SOMEPAGER
+	else
+	# for just a few lines of output or when no pager set, do this:
+		echo "$RESULTS"
+	fi
+fi

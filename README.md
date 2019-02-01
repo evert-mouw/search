@@ -14,6 +14,8 @@ This is a *locate wrapper* which does:
 
 I use this on my personal machines to easily find files on both the local computer and a remote file storage. I like to be able to quickly type "search foo bar" or click an icon in my dock or press Super-F, start the search, fine-tune the search using fzf, and open the filemanager Thunar with the selected file already selected.
 
+![Screenshot](screenshot.png)
+
 ## intended use
 
 The scripts are meant to be used in an XFCE environment. I din't test other desktop environments; probably you don't need to change very much to adapt it. The intended users know a bit about Linux command line and/or scripting use and can edit the settings in the shellscripts.
